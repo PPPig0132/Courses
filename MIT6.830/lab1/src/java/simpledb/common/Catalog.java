@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class Catalog {
 
-    //使用hashmap处理表id与Dbfile之间的唯一性
+    //Map id and table for unique identification with hashtable
     private final ConcurrentHashMap<Integer,table> tableMap;
 
     public static class table implements Serializable {
@@ -107,16 +107,6 @@ public class Catalog {
                 break;
             }
         }
-        // if(id==-1){
-        //     throw new NoSuchElementException("Table with name " + name + " does not exist in the catalog.");
-        // }
-        // return id;
-
-        // Integer res =tableMap.entrySet().stream()
-        //         .filter(entry -> entry.getValue().tableName.equals(name))
-        //         .map(Map.Entry::getKey)
-        //         .findFirst()
-        //         .orElse(null);
         if(res != null){
             return res.intValue();
         }else{
@@ -235,7 +225,10 @@ public class Catalog {
                 TupleDesc t = new TupleDesc(typeAr, namesAr);
                 HeapFile tabHf = new HeapFile(new File(baseFolder+"/"+name + ".dat"), t);
                 addTable(tabHf,name,primaryKey);
-                System.out.println("Added table : " + name + " with schema " + t);
+                System.out.println("Added table : " + name + " with schema ");
+                for(int i=0;i<t.numFields();i++){
+                    System.out.println(t.getFieldName(i)+":"+t.getFieldType(i));
+                }
             }
         } catch (IOException e) {
             e.printStackTrace();
