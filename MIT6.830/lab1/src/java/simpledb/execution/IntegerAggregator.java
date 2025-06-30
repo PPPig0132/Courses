@@ -1,7 +1,18 @@
 package simpledb.execution;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
+import simpledb.common.DbException;
 import simpledb.common.Type;
+import simpledb.storage.Field;
+import simpledb.storage.IntField;
 import simpledb.storage.Tuple;
+import simpledb.storage.TupleDesc;
+import simpledb.transaction.TransactionAbortedException;
 
 /**
  * Knows how to compute some aggregate over a set of IntFields.
@@ -10,6 +21,14 @@ public class IntegerAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
 
+    private int gbfield; // index of the group-by field
+    private Type gbfieldtype; // type of the group-by field
+    private int afield; // index of the aggregate field
+    private Op what; // aggregation operator
+
+
+    private AggOpera.Basic agg;
+    private HashMap<Field, int[]> infos = new HashMap<>();
     /**
      * Aggregate constructor
      * 
@@ -27,6 +46,11 @@ public class IntegerAggregator implements Aggregator {
 
     public IntegerAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
         // some code goes here
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        this.what = what;
+        this.agg = AggOpera.Tool.getBasic(what, afield);
     }
 
     /**
@@ -36,9 +60,24 @@ public class IntegerAggregator implements Aggregator {
      * @param tup
      *            the Tuple containing an aggregate field and a group-by field
      */
-    public void mergeTupleIntoGroup(Tuple tup) {
-        // some code goes here
+    public Field getKey(Tuple tup) {
+        return this.gbfield == -1 ? new IntField(-1) : tup.getField(this.gbfield);
     }
+
+    public boolean _check(Tuple tup) {
+        Field gid = getKey(tup);
+        int[] tem = infos.get(gid);
+        return tem != null;
+    }
+
+    public void mergeTupleIntoGroup(Tuple tup) {
+        if(_check(tup)) {
+            infos.put(getKey(tup), agg.oper(infos.get(getKey(tup)), tup));
+        }else
+            infos.put(getKey(tup), agg.init(tup));
+    }
+    
+
 
     /**
      * Create a OpIterator over group aggregate results.
@@ -48,10 +87,80 @@ public class IntegerAggregator implements Aggregator {
      *         aggregateVal is determined by the type of aggregate specified in
      *         the constructor.
      */
-    public OpIterator iterator() {
-        // some code goes here
-        throw new
-        UnsupportedOperationException("please implement me for lab2");
-    }
+     public OpIterator iterator() {
+        return new OpIterator() {
+            private boolean opened = false;
+            private Iterator<Tuple> item = null;
+            private ArrayList<Tuple> tuples = new ArrayList<>();
 
+            private void getIter() {
+                tuples.clear();
+                if(infos.isEmpty()) return;
+                if(gbfield == Aggregator.NO_GROUPING) {
+                    Tuple tuple = new Tuple(new TupleDesc(new Type[]{Type.INT_TYPE}));
+                    tuple.setField(0, new IntField(
+                            infos.get(new IntField(-1))[AggOpera.Tool.getIndex(what)]
+                    ));
+                    tuples.add(tuple);
+                }else {
+                    for(Map.Entry<Field, int[]> pr : infos.entrySet()) {
+                        Tuple tuple = new Tuple(new TupleDesc(new Type[]{pr.getKey().getType() , Type.INT_TYPE}));
+                        tuple.setField(0, pr.getKey());
+                        tuple.setField(1, new IntField(pr.getValue()[AggOpera.Tool.getIndex(what)]));
+                        tuples.add(tuple);
+                    }
+                }
+                item = tuples.iterator();
+            }
+
+            @Override
+            public void open() throws DbException, TransactionAbortedException {
+                this.opened = true;
+                this.getIter();
+                this.rewind();
+            }
+
+            @Override
+            public boolean hasNext() throws DbException, TransactionAbortedException {
+                if(! this.opened)
+                    throw new IllegalStateException();
+                return item.hasNext();
+            }
+
+            @Override
+            public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
+                if(! this.opened)
+                    throw new IllegalStateException();
+                if(item.hasNext()) {
+                    return item.next();
+                }
+                throw new NoSuchElementException();
+            }
+
+            @Override
+            public void rewind() throws DbException, TransactionAbortedException {
+                getIter();
+            }
+
+            @Override
+            public TupleDesc getTupleDesc() {
+                if(tuples == null) {
+                    try {
+                        open();
+                    } catch (TransactionAbortedException | DbException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                if(tuples == null || tuples.isEmpty())
+                    return null;
+                return tuples.get(0).getTupleDesc();
+            }
+
+            @Override
+            public void close() {
+                this.opened = false;
+            }
+        };
+    }
+   
 }

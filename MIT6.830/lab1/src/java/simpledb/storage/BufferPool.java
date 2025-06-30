@@ -9,6 +9,7 @@ import simpledb.transaction.TransactionId;
 
 import java.io.*;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
  
 /**
@@ -36,31 +37,8 @@ public class BufferPool {
     private final int numPages; // Maximum number of pages in the buffer pool
 
     private ConcurrentHashMap<Integer, Page> pageMap; // Map to hold pages in the buffer pool
-
-    // private Page[] pages; // Array to hold the pages in the buffer pool
-    // public class page{
-    //     private final PageId pid;
-    //     private final Page page;
-    //     private final Permissions perm;
-
-    //     public page(PageId pid, Page page, Permissions perm) {
-    //         this.pid = pid;
-    //         this.page = page;
-    //         this.perm = perm;
-    //     }
-
-    //     public PageId getPid() {
-    //         return pid;
-    //     }
-
-    //     public Page getPage() {
-    //         return page;
-    //     }
-
-    //     public Permissions getPerm() {
-    //         return perm;
-    //     }
-    // }
+    private ConcurrentHashMap<Integer, Integer> usedPages; // List to keep track of used pages for eviction,<pid,lruIndex>
+    private Integer lruIndex; // Index for LRU eviction policy
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
@@ -71,6 +49,8 @@ public class BufferPool {
         // some code goes here
         this.numPages = numPages;
         pageMap = new ConcurrentHashMap<>();
+        usedPages = new ConcurrentHashMap<>();
+        lruIndex = 0; // Initialize the LRU index
     }
     
     public static int getPageSize() {
@@ -107,11 +87,21 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
     throws TransactionAbortedException, DbException {
         // some code goes here
+        if(pageMap.size() >= numPages) {
+            // If the buffer pool is full, evict a page
+            try {
+                evictPage();
+            } catch (DbException e) {
+                throw new DbException("Buffer pool is full and cannot evict a page.");
+            }
+        }
          if(!pageMap.containsKey(pid.hashCode())){
             DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
             Page page = dbFile.readPage(pid);
-            pageMap.put(pid.hashCode(), page);
+            pageMap.put(pid.hashCode(), page);// Initialize min if it's the first page
+            usedPages.put(pid.hashCode(), lruIndex++); // Add the page to the buffer pool with LRU index
          }
+         
         return pageMap.get(pid.hashCode());
     }
 
@@ -176,6 +166,15 @@ public class BufferPool {
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
+        HeapFile heapFile = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
+        List<Page> modifiedPages = heapFile.insertTuple(tid, t);
+        for (Page page : modifiedPages) {
+            // Mark the page as dirty
+            page.markDirty(true, tid);
+            // Add the page to the buffer pool
+            pageMap.put(page.getId().hashCode(), page);
+            usedPages.put(page.getId().hashCode(), lruIndex++);
+        }
         // not necessary for lab1
     }
 
@@ -195,6 +194,15 @@ public class BufferPool {
     public  void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
+        List<Page> modifiedPages = dbFile.deleteTuple(tid, t);
+        for (Page page : modifiedPages) {
+            // Mark the page as dirty
+            page.markDirty(true, tid);
+            // Add the page to the buffer pool
+            pageMap.put(page.getId().hashCode(), page);
+            usedPages.put(page.getId().hashCode(), lruIndex++);
+        }
         // not necessary for lab1
     }
 
@@ -206,6 +214,10 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
+        for(Map.Entry< Integer,Page> entry : pageMap.entrySet()){
+            PageId pid = entry.getValue().getId();
+            flushPage(pid);
+        }
 
     }
 
@@ -220,6 +232,9 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        if (pageMap.containsKey(pid.hashCode())) {
+            pageMap.remove(pid.hashCode());
+        }
     }
 
     /**
@@ -229,6 +244,12 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        Page page = pageMap.get(pid.hashCode());
+        if (page != null && page.isDirty() != null) {
+            DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+            dbFile.writePage(page);
+            page.markDirty(false, null); // Mark the page as clean after flushing
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -241,10 +262,23 @@ public class BufferPool {
     /**
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
+     * which should be evicted: the page with the least recently used
+     * (LRU) policy.
      */
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        int minIndex = Integer.MAX_VALUE;
+        PageId min = null;
+        for(Map.Entry< Integer,Page> entry : pageMap.entrySet()){
+            PageId pid = entry.getValue().getId();
+            int index = usedPages.get(pid.hashCode());
+            if (index < minIndex) {
+                minIndex = index;
+                min = pid;
+            }
+        }
+        discardPage(min);
     }
 
 }
