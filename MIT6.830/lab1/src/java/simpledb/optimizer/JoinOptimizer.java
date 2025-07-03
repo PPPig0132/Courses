@@ -130,7 +130,8 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            double cost=cost1+card1*cost2+card1*card2;
+            return cost;
         }
     }
 
@@ -176,7 +177,31 @@ public class JoinOptimizer {
                                                    Map<String, Integer> tableAliasToId) {
         int card = 1;
         // some code goes here
-        return card <= 0 ? 1 : card;
+        // int tid1= tableAliasToId.get(table1Alias);
+        // int tid2= tableAliasToId.get(table2Alias);
+        // String tName1=Database.getCatalog().getTableName(tid2);
+        // String tName2=Database.getCatalog().getTableName(tid1);
+        // int t1=stats.get(tName1).totalTuples();
+        // int t2=stats.get(tName2).totalTuples();
+        if(joinOp == Predicate.Op.EQUALS){
+            if(t1pkey && t2pkey){// both are primary keys, primary key means unique, so the card should be 1
+                
+                card = 1;
+            }
+            else if (t1pkey || t2pkey) {
+                // one of them is primary key, so the card should be the other one
+                card =Math.min(card1, card2);
+            }
+            else{
+                // neither is primary key, so the card should be the product of both
+                card =Math.max(card1, card2);
+
+            }
+            return card;
+
+        }
+        
+        return card1*card2; // if not equals, then the card is the product of both
     }
 
     /**
@@ -238,7 +263,33 @@ public class JoinOptimizer {
 
         // some code goes here
         //Replace the following
-        return joins;
+        Set<Set<LogicalJoinNode>> subSets  = null;
+        PlanCache pc= new PlanCache();// Store the best plans for each subset of joins
+        List<LogicalJoinNode> res=new ArrayList<>();
+        int n= joins.size();
+        if (n == 0) {
+            return new ArrayList<>();
+        }
+        for(int i=0;i<n+1;i++){//Using  DP algorithm to get the optimal order of joins
+            subSets = enumerateSubsets(joins, i );
+            for(Set<LogicalJoinNode> subSet : subSets) {
+                double bcsf=Double.MAX_VALUE;//bestCostSoFar
+                for(LogicalJoinNode j : subSet) {
+                    CostCard cc=computeCostAndCardOfSubplan(stats, filterSelectivities, j, subSet, bcsf, pc);
+                    if(cc!=null && cc.cost < bcsf) {
+                        bcsf = cc.cost;
+                        pc.addPlan(subSet,bcsf,cc.card,cc.plan);
+                    }
+                }
+                
+            }
+        }
+        for (Set<LogicalJoinNode> nodeSet : subSets)
+            res = pc.getOrder(nodeSet);
+        if (explain)
+            printJoins(res, pc, stats, filterSelectivities);
+
+        return res;
     }
 
     // ===================== Private Methods =================================

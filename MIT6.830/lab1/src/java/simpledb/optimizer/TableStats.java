@@ -6,6 +6,7 @@ import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
+import simpledb.transaction.TransactionId;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -68,6 +69,16 @@ public class TableStats {
      */
     static final int NUM_HIST_BINS = 100;
 
+    private int ioCostPerPage;
+    private DbFile dbFile;
+    private int tableid;
+    private int numFields;
+    private int numTuples;
+    private int numPages;
+    private HashMap<Integer,IntHistogram> intHistogramHashMap;
+    private HashMap<Integer,StringHistogram> stringHistogramHashMap;
+    private Tuple tupleItem;
+
     /**
      * Create a new TableStats object, that keeps track of statistics on each
      * column of a table
@@ -87,7 +98,102 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        numTuples = 0;
+        this.tableid = tableid;
+        this.ioCostPerPage = ioCostPerPage;
+        intHistogramHashMap = new HashMap<Integer, IntHistogram>();
+        stringHistogramHashMap = new HashMap<Integer, StringHistogram>();
+ 
+        dbFile = Database.getCatalog().getDatabaseFile(tableid);// dbfile should be a instancation of HeapFile
+        numPages = ((HeapFile)dbFile).numPages();
+        TupleDesc td = dbFile.getTupleDesc();
+ 
+        numFields = td.numFields();
+        Type types[] = getTypes(td);
+ 
+        int[] mins = new int[numFields];
+        int[] maxs = new int[numFields];
+ 
+        TransactionId tid = new TransactionId();
+        SeqScan scan = new SeqScan(tid,tableid,"");
+        try{
+            scan.open();
+            for(int i=0;i<numFields;++i){//scan each column(fields)
+                if(types[i] == Type.STRING_TYPE)
+                    continue;
+ 
+                int min = Integer.MAX_VALUE;
+                int max = Integer.MIN_VALUE;
+ 
+                while(scan.hasNext()){//scan each row(tuple)
+                    if(i == 0) numTuples++;
+                    Tuple tuple = scan.next();
+                    this.tupleItem = tuple;
+                    IntField field = (IntField)tuple.getField(i);
+                    int val = field.getValue();
+                    if(val > max) max = val;
+                    if(val < min) min = val;
+                }
+                scan.rewind();
+                mins[i] = min;
+                maxs[i] = max;
+            }
+            scan.close();
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+ 
+        for(int i=0;i < numFields;++i){
+            Type type = types[i];
+            if(type == Type.INT_TYPE){
+                IntHistogram intHistogram = new IntHistogram(NUM_HIST_BINS,mins[i],maxs[i]);
+                intHistogramHashMap.put(i,intHistogram);
+            }else{
+                StringHistogram stringHistogram = new StringHistogram(NUM_HIST_BINS);
+                stringHistogramHashMap.put(i,stringHistogram);
+            }
+        }
+ 
+        addValueToHist(tableid);
+
     }
+    private Type[] getTypes(TupleDesc td){
+        int numFields = td.numFields();
+        Type[] types = new Type[numFields];
+ 
+        for(int i=0;i<numFields;++i){
+            Type t = td.getFieldType(i);
+            types[i] = t;
+        }
+        return types;
+    }
+ 
+    private void addValueToHist(int tableid){
+        TransactionId tid = new TransactionId();
+        SeqScan scan = new SeqScan(tid,tableid,"");
+        try{
+            scan.open();
+            while(scan.hasNext()){
+                Tuple tuple = scan.next();
+ 
+                for(int i=0;i<numFields;++i){
+                    Field field = tuple.getField(i);
+ 
+                    if(field.getType() == Type.INT_TYPE){
+                        int val = ((IntField)field).getValue();
+                        intHistogramHashMap.get(i).addValue(val);
+                    }else{
+                        String val = ((StringField)field).getValue();
+                        stringHistogramHashMap.get(i).addValue(val);
+                    }
+                }
+            }
+            scan.close();
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+    }
+
 
     /**
      * Estimates the cost of sequentially scanning the file, given that the cost
@@ -102,8 +208,10 @@ public class TableStats {
      * @return The estimated cost of scanning the table.
      */
     public double estimateScanCost() {
+
+        double cost = numPages * ioCostPerPage;
         // some code goes here
-        return 0;
+        return cost;
     }
 
     /**
@@ -117,7 +225,7 @@ public class TableStats {
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+        return (int)(numTuples*selectivityFactor);
     }
 
     /**
@@ -132,7 +240,14 @@ public class TableStats {
      * */
     public double avgSelectivity(int field, Predicate.Op op) {
         // some code goes here
-        return 1.0;
+        double res = 0.0;
+        Field f = tupleItem.getField(field);
+        if(f.getType() == Type.INT_TYPE){
+            res+=intHistogramHashMap.get(field).avgSelectivity();
+        }else{
+            res+=stringHistogramHashMap.get(field).avgSelectivity();
+        }
+        return res;
     }
 
     /**
@@ -150,7 +265,15 @@ public class TableStats {
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+        double res = 0.0;
+        if(constant.getType() == Type.INT_TYPE){
+            int val = ((IntField)constant).getValue();
+            res+=intHistogramHashMap.get(field).estimateSelectivity(op, val);
+        }else{
+            String val = ((StringField)constant).getValue();
+            res+=stringHistogramHashMap.get(field).estimateSelectivity(op, val);
+        }
+        return res;
     }
 
     /**
@@ -158,7 +281,7 @@ public class TableStats {
      * */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return numTuples;
     }
 
 }
