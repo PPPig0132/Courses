@@ -287,10 +287,10 @@ public class HeapPage implements Page {
         }
         for(int i=0;i<numSlots;i++){
             if(!isSlotUsed(i)){
-                tuples[i] = t; // add the tuple to the page
                 markSlotUsed(i, true);
                 t.setRecordId(new RecordId(pid, i)); // update the RecordId of the tuple
-                return;
+                tuples[i] = t; // add the tuple to the page
+                break;
             }
         }
         
@@ -356,8 +356,8 @@ public class HeapPage implements Page {
             byte mask = (byte) (1 << (bitIndex ));// 00001000
             header[byteIndex]= (byte) (header[byteIndex] | mask); // clear the corresponding bit in the header
         }
-        else{//置为0
-            byte mask = (byte) ~(1 << (bitIndex ));//先右移再取反，11110111
+        else{//set to 0
+            byte mask = (byte) ~(1 << (bitIndex ));//>> then negation, 11110111
             header[byteIndex]= (byte) (header[byteIndex] & mask);
         }
        

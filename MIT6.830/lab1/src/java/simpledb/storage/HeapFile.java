@@ -128,7 +128,8 @@ public class HeapFile implements DbFile {
      */
     public int numPages() {
         // some code goes here
-        int numPages = (int) (file.length() / BufferPool.getPageSize());
+        long l=file.length();
+        int numPages = (int) (l / BufferPool.getPageSize());
         return numPages;
     }
 
@@ -138,7 +139,7 @@ public class HeapFile implements DbFile {
         // some code goes here
         int id = getId();
          for(int i = 0 ; i < numPages() ; i++) {
-            HeapPage hpg = (HeapPage)  Database.getBufferPool().getPage(tid, new HeapPageId(id, i), Permissions.READ_WRITE);;
+            HeapPage hpg = (HeapPage)  Database.getBufferPool().getPage(tid, new HeapPageId(id, i), Permissions.READ_WRITE);
             try {
                 hpg.insertTuple(t);
                 //hpg.markDirty(true, tid);

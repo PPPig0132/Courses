@@ -60,11 +60,14 @@ public class Insert extends Operator {
 
     public void open() throws DbException, TransactionAbortedException {
         // some code goes here
+        
        child.open();
+       super.open();
     }
 
     public void close() {
         // some code goes here
+        super.close();
         child.close();
     }
 
@@ -104,7 +107,10 @@ public class Insert extends Operator {
                 }
 
                 
-            }   
+            }
+        if(count == 0) {
+            return null; // No tuples were inserted, return null
+        }
         res.setField(0, new IntField(count));
         return res;
     }
